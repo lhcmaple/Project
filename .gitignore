@@ -1,3 +1,5 @@
 UDP/udp
 fileio/demo
 fileio/demo.txt
+.vscode
+*/.vscode
