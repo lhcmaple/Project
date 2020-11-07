@@ -1,4 +1,7 @@
 UDP/udp
+UDP/udp_client
+UDP/udp.log
+UDP/udp.dat/
 fileio/demo
 fileio/demo.txt
 .vscode
