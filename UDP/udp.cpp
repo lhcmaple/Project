@@ -22,8 +22,9 @@ server::server(sockaddr *addr,socklen_t len)
 
 int server::run()
 {
+    mode_t premode=umask(0);
     //打开udp.log日志文件
-    int logfd=open("udp.log",O_WRONLY|O_APPEND|O_CREAT);
+    int logfd=open("udp.log",O_WRONLY|O_APPEND|O_CREAT,RWRWRW);
     sprintf(buff,"服务器启动...\n");
     write(logfd,buff,strlen(buff));
     //获取udp.dat下的所有目录(xx.xx),并读取对应用户的密码
@@ -57,10 +58,10 @@ int server::run()
                         sprintf(buff+8,"注册成功");
                         sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
                         sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
-                        mkdir(path,S_IRUSR|S_IWUSR|S_IXUSR);
+                        mkdir(path,RWXRWRW);
                         //创建消息栈
                         sprintf(path1,"%s/MESSAGE.st",path);
-                        close(open(path1,O_CREAT));
+                        close(open(path1,O_CREAT,RWRWRW));
                     }
                     else
                     {
@@ -82,7 +83,7 @@ int server::run()
                         *(((char *)&targetname)+1),*(((char *)&password)),*(((char *)&password)+1));
                         sprintf(path1,"%s/MESSAGE.st",path);
                         int messagefd=open(path1,O_RDWR);
-                        cout<<messagefd<<endl;
+                        // cout<<messagefd<<endl;
                         int filelen=lseek(messagefd,0,SEEK_END);
                         if(filelen<10)//消息栈未满
                         {
@@ -90,9 +91,9 @@ int server::run()
                             char num='0'+filelen;
                             write(messagefd,&num,1);
                             sprintf(path1,"%s/%c",path,num);
-                            cout<<path1<<endl;
-                            int datafd=open(path1,O_WRONLY|O_CREAT);
-                            cout<<datafd<<endl;
+                            // cout<<path1<<endl;
+                            int datafd=open(path1,O_WRONLY|O_CREAT,RWRWRW);
+                            // cout<<datafd<<endl;
                             buff[6]=buff[0];
                             buff[7]=buff[1];
                             write(datafd,buff+6,nbytes-6);
@@ -146,6 +147,7 @@ int server::run()
                             nbytes=read(datafd,buff+6,buffsize-6);
                             close(datafd);
                             sendto(sockfd,buff,nbytes+6,0,(sockaddr *) &cliaddr,len);
+                            remove(path1);
                         }
                         else
                         {
@@ -166,14 +168,17 @@ int server::run()
                     }
                     break;
                 default:
+                    sprintf(buff+8,"无此服务代码");
+                    sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
                     break;
             }
         }
         //写入日志文件 ip port type
-        sprintf(buff,"%s %d %d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port),type);
-        cout<<buff<<endl;
+        sprintf(buff,"%s-%d,%c%c %d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port),*(((char *)&username)),*(((char *)&username)+1),type);
         write(logfd,buff,strlen(buff));
     }
+    close(logfd);
+    umask(premode);
     return 0;
 }
 
@@ -183,7 +188,7 @@ void server::load()
     DIR *dir=opendir(UDPDAT);
     if(dir==NULL)
     {
-        mkdir(UDPDAT,S_IRUSR|S_IWUSR|S_IXUSR);
+        mkdir(UDPDAT,RWXRWRW);
         dir=opendir(UDPDAT);
     }
     //读取用户名与密码
@@ -201,7 +206,10 @@ void server::load()
 int server::gettype()
 {
     char num[3]{buff[4],buff[5],'\0'};
-    return stoi(num);
+    if(buff[4]>='0'&&buff[4]<='9'&&buff[5]>='0'&&buff[5]<='9')
+        return stoi(num);
+    else
+        return -1;
 }
 
 server::~server()
