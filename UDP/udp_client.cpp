@@ -12,12 +12,12 @@ client::client()
 {
     servaddr.sin_family=AF_INET;
     servaddr.sin_port=htons(5000);
-    inet_aton("127.0.0.1",&(servaddr.sin_addr));
+    inet_aton("42.192.55.215",&(servaddr.sin_addr));
     len=sizeof(servaddr);
     sockfd=socket(AF_INET,SOCK_DGRAM,0);
     cliaddr.sin_family=AF_INET;
     cliaddr.sin_port=htons(5100);
-    inet_aton("127.0.0.1",&(cliaddr.sin_addr));
+    inet_aton("0.0.0.0",&(cliaddr.sin_addr));
     bind(sockfd,(sockaddr *)&cliaddr,sizeof(cliaddr));
     buffsize=(1<<16);
     buff=new char[buffsize];
