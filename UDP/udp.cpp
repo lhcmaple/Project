@@ -1,7 +1,5 @@
 #include "udp.h"
 
-//work line 50+,
-
 int main(int argc,char *argv[])
 {
     struct sockaddr_in servaddr;
@@ -66,6 +64,7 @@ int server::run()
         sprintf(buff,"%s-%d,%c%c %d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port),*(((char *)&username)),*(((char *)&username)+1),type);
         write(logfd,buff,strlen(buff));
     }
+    while(waitpid(-1,NULL,WNOHANG)>0);
     close(logfd);
     umask(premode);
     return 0;
@@ -99,7 +98,7 @@ void server::worker(int type,size_t nbytes)
                 sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
             }
             break;
-        case 1://发送
+        case 1://发送,need to be add somethings
             if(userinfo.find(username)!=userinfo.end()&&
             userinfo.find(username)->second==password&&
             userinfo.find(targetname)!=userinfo.end())
@@ -150,7 +149,7 @@ void server::worker(int type,size_t nbytes)
                 sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
             }
             break;
-        case 2:
+        case 2://need to be add somethings
             if(userinfo.find(username)!=userinfo.end()&&
             userinfo.find(username)->second==password)
             {
