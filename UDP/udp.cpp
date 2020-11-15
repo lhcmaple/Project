@@ -30,173 +30,191 @@ int server::run()
     //获取udp.dat下的所有目录(xx.xx),并读取对应用户的密码
     load();
 
+    //创建进程池
+    for(int i=0;i<NPOOL;++i)
+    {
+        pipe(pfd[i]);
+        pool[i]=fork();
+        if(pool[i]<0)
+            return -1;
+        else if(pool[i]==0)
+        {
+            close(pfd[i][1]);
+            worker(pfd[i][0]);
+            exit(0);
+        }
+        else
+        {
+            close(pfd[i][0]);
+        }
+    }
+
+    //并发处理请求
+    int nextprocess=0;
+    size_t nbytes;
     while(true)
     {
-        size_t nbytes;
-        int type;
         len=sizeof(cliaddr);
         nbytes=recvfrom(sockfd,buff,buffsize,0,(sockaddr *)&cliaddr,&len);
-        //判定请求类型
-        if(nbytes>=8)
-        {
-            username=*(ushort *)buff;
-            password=*(ushort *)(buff+2);
-            targetname=*(ushort *)(buff+6);
-            type=gettype();
-            pid_t pid=fork();
-            if(pid<0)
-                return -1;
-            else if(pid==0)
-            {
-                //子进程处理
-                worker(type,nbytes);
-                return 0;
-            }
-            else
-            {
-                //等待子进程结束(异步),并处理
-                while(waitpid(-1,NULL,WNOHANG)>0);
-                if(type==0&&userinfo.find(username)==userinfo.end())
-                    userinfo[username]=password;
-            }
-        }
+        write(pfd[nextprocess][1],&len,sizeof(len));
+        write(pfd[nextprocess][1],&cliaddr,len);
+        write(pfd[nextprocess][1],&nbytes,sizeof(nbytes));
+        write(pfd[nextprocess][1],buff,nbytes);
+        nextprocess=(nextprocess+1)%NPOOL;
+
         //写入日志文件,格式:ip-port user type
-        sprintf(buff,"%s-%d,%c%c %d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port),*(((char *)&username)),*(((char *)&username)+1),type);
+        sprintf(buff,"%s-%d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port));
         write(logfd,buff,strlen(buff));
     }
-    while(waitpid(-1,NULL,WNOHANG)>0);
+
     close(logfd);
     umask(premode);
     return 0;
 }
 
-void server::worker(int type,size_t nbytes)
+void server::worker(int rfd)
 {
     //需要增加文件锁与消息发送锁,并通知父进程修改userinfo
-    switch(type)
-    {
-        case 0://注册
-            if(userinfo.find(username)==userinfo.end())
-            {
-                //创建新用户
-                buff[4]='0';
-                buff[5]='4';
-                sprintf(buff+8,"注册成功");
-                sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
-                sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
-                mkdir(path,RWXRWRW);
-                //创建消息栈
-                sprintf(path1,"%s/MESSAGE.st",path);
-                close(open(path1,O_CREAT,RWRWRW));
-            }
-            else
-            {
-                //用户已存在
-                buff[4]='0';
-                buff[5]='3';
-                sprintf(buff+8,"注册失败");
-                sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
-            }
-            break;
-        case 1://发送,need to be add somethings
-            if(userinfo.find(username)!=userinfo.end()&&
-            userinfo.find(username)->second==password&&
-            userinfo.find(targetname)!=userinfo.end())
-            {
-                //用户名与密码验证正确,目标用户存在
-                password=userinfo.find(targetname)->second;
-                sprintf(path,"%s/%c%c.%c%c",UDPDAT,*(((char *)&targetname)),
-                *(((char *)&targetname)+1),*(((char *)&password)),*(((char *)&password)+1));
-                sprintf(path1,"%s/MESSAGE.st",path);
-                int messagefd=open(path1,O_RDWR);
-                // cout<<messagefd<<endl;
-                int filelen=lseek(messagefd,0,SEEK_END);
-                if(filelen<10)//消息栈未满
-                {
-                    // cout<<filelen<<endl;
-                    char num='0'+filelen;
-                    write(messagefd,&num,1);
-                    sprintf(path1,"%s/%c",path,num);
-                    // cout<<path1<<endl;
-                    int datafd=open(path1,O_WRONLY|O_CREAT,RWRWRW);
-                    // cout<<datafd<<endl;
-                    buff[6]=buff[0];
-                    buff[7]=buff[1];
-                    write(datafd,buff+6,nbytes-6);
-                    close(datafd);
 
+    size_t nbytes;
+    int type;
+    while(true)
+    {
+        read(rfd,&len,sizeof(len));
+        read(rfd,&cliaddr,len);
+        read(rfd,&nbytes,sizeof(nbytes));
+        read(rfd,buff,nbytes);
+        if(nbytes<8)
+            continue;
+        type=gettype();
+        username=*(ushort *)buff;
+        password=*(ushort *)(buff+2);
+        targetname=*(ushort *)(buff+6);
+        switch(type)
+        {
+            case 0://注册
+                if(userinfo.find(username)==userinfo.end())
+                {
+                    //创建新用户
                     buff[4]='0';
-                    buff[5]='6';
-                    buff[6]='0';
-                    buff[7]='0';
-                    sprintf(buff+8,"发送成功");
+                    buff[5]='4';
+                    sprintf(buff+8,"注册成功");
                     sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
+                    mkdir(path,RWXRWRW);
+                    //创建消息栈
+                    sprintf(path1,"%s/MESSAGE.st",path);
+                    close(open(path1,O_CREAT,RWRWRW));
                 }
                 else
                 {
-                    buff[4]='1';
-                    buff[5]='0';
-                    sprintf(buff+8,"消息栈满");
+                    //用户已存在
+                    buff[4]='0';
+                    buff[5]='3';
+                    sprintf(buff+8,"注册失败");
                     sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
                 }
-                close(messagefd);
-            }
-            else
-            {
-                buff[4]='0';
-                buff[5]='5';
-                sprintf(buff+8,"未注册或目标用户未注册");
-                sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
-            }
-            break;
-        case 2://need to be add somethings
-            if(userinfo.find(username)!=userinfo.end()&&
-            userinfo.find(username)->second==password)
-            {
-                //用户名与密码验证正确
-                sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
-                sprintf(path1,"%s/MESSAGE.st",path);
-                int messagefd=open(path1,O_RDWR);
-                int filelen=lseek(messagefd,0,SEEK_END);
-                if(filelen>0)
+                break;
+            case 1://发送,need to be add somethings
+                if(userinfo.find(username)!=userinfo.end()&&
+                userinfo.find(username)->second==password&&
+                userinfo.find(targetname)!=userinfo.end())
                 {
-                    //有消息待转发
-                    lseek(messagefd,-1,SEEK_END);
-                    char num;
-                    read(messagefd,&num,1);
-                    ftruncate(messagefd,filelen-1);
+                    //用户名与密码验证正确,目标用户存在
+                    password=userinfo.find(targetname)->second;
+                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,*(((char *)&targetname)),
+                    *(((char *)&targetname)+1),*(((char *)&password)),*(((char *)&password)+1));
+                    sprintf(path1,"%s/MESSAGE.st",path);
+                    int messagefd=open(path1,O_RDWR);
+                    // cout<<messagefd<<endl;
+                    int filelen=lseek(messagefd,0,SEEK_END);
+                    if(filelen<10)//消息栈未满
+                    {
+                        // cout<<filelen<<endl;
+                        char num='0'+filelen;
+                        write(messagefd,&num,1);
+                        sprintf(path1,"%s/%c",path,num);
+                        // cout<<path1<<endl;
+                        int datafd=open(path1,O_WRONLY|O_CREAT,RWRWRW);
+                        // cout<<datafd<<endl;
+                        buff[6]=buff[0];
+                        buff[7]=buff[1];
+                        write(datafd,buff+6,nbytes-6);
+                        close(datafd);
+
+                        buff[4]='0';
+                        buff[5]='6';
+                        buff[6]='0';
+                        buff[7]='0';
+                        sprintf(buff+8,"发送成功");
+                        sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    }
+                    else
+                    {
+                        buff[4]='1';
+                        buff[5]='0';
+                        sprintf(buff+8,"消息栈满");
+                        sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    }
                     close(messagefd);
-                    sprintf(path1,"%s/%c",path,num);
-                    int datafd=open(path1,O_RDONLY);
-                    buff[4]='0';
-                    buff[5]='8';
-                    nbytes=read(datafd,buff+6,buffsize-6);
-                    close(datafd);
-                    sendto(sockfd,buff,nbytes+6,0,(sockaddr *) &cliaddr,len);
-                    remove(path1);
                 }
                 else
                 {
-                    //无消息待转发
                     buff[4]='0';
-                    buff[5]='7';
-                    sprintf(buff+8,"消息栈空");
+                    buff[5]='5';
+                    sprintf(buff+8,"未注册或目标用户未注册");
                     sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
                 }
-                close(messagefd);
-            }
-            else
-            {
-                buff[4]='0';
-                buff[5]='9';
-                sprintf(buff+8,"密码错误");
+                break;
+            case 2://need to be add somethings
+                if(userinfo.find(username)!=userinfo.end()&&
+                userinfo.find(username)->second==password)
+                {
+                    //用户名与密码验证正确
+                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
+                    sprintf(path1,"%s/MESSAGE.st",path);
+                    int messagefd=open(path1,O_RDWR);
+                    int filelen=lseek(messagefd,0,SEEK_END);
+                    if(filelen>0)
+                    {
+                        //有消息待转发
+                        lseek(messagefd,-1,SEEK_END);
+                        char num;
+                        read(messagefd,&num,1);
+                        ftruncate(messagefd,filelen-1);
+                        close(messagefd);
+                        sprintf(path1,"%s/%c",path,num);
+                        int datafd=open(path1,O_RDONLY);
+                        buff[4]='0';
+                        buff[5]='8';
+                        nbytes=read(datafd,buff+6,buffsize-6);
+                        close(datafd);
+                        sendto(sockfd,buff,nbytes+6,0,(sockaddr *) &cliaddr,len);
+                        remove(path1);
+                    }
+                    else
+                    {
+                        //无消息待转发
+                        buff[4]='0';
+                        buff[5]='7';
+                        sprintf(buff+8,"消息栈空");
+                        sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    }
+                    close(messagefd);
+                }
+                else
+                {
+                    buff[4]='0';
+                    buff[5]='9';
+                    sprintf(buff+8,"密码错误");
+                    sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                }
+                break;
+            default:
+                sprintf(buff+8,"无此服务代码");
                 sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
-            }
-            break;
-        default:
-            sprintf(buff+8,"无此服务代码");
-            sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
-            break;
+                break;
+        }
     }
 }
 
