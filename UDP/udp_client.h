@@ -18,15 +18,13 @@ private:
     int sockfd;
     char *buff;
     size_t buffsize;
-    int smesgcount;
-    int rmesgcount;
 
     sockaddr_in servaddr;
     socklen_t len;
 public:
     client(const char *servip);
-    int run();
+    int run(const char *file);
     ~client();
 };
 
-#endif
+#endif//_H_UDP
