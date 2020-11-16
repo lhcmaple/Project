@@ -13,14 +13,17 @@
 #include <unistd.h>
 #include <ctime>
 #include <dirent.h>
-
-typedef unsigned short ushort;
+#include <sys/shm.h>
 
 using namespace std;
+
+typedef unsigned short ushort;
+typedef char (*TYPE_USERINFO)[3];
+
 #define RWRWRW (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH)
 #define RWXRWRW (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH)
 #define PATH_LENGTH 256
-#define NPOOL 10
+#define NPOOL 10 //进程池大小
 
 class server{
 private:
@@ -35,7 +38,7 @@ private:
     sockaddr_in cliaddr;//需要传送到子进程
     socklen_t len;//需要传送到子进程
 
-    unordered_map<ushort,ushort> userinfo;//共享存储解决同步修改问题
+    TYPE_USERINFO userinfo;//共享存储解决同步修改问题
     ushort username,password,targetname;
 
     pid_t pool[NPOOL];
@@ -50,4 +53,4 @@ public:
     int run();
 };
 
-#endif
+#endif//_H_UDP

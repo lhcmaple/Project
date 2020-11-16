@@ -28,6 +28,9 @@ int server::run()
     sprintf(buff,"服务器启动...\n");
     write(logfd,buff,strlen(buff));
     //获取udp.dat下的所有目录(xx.xx),并读取对应用户的密码
+    int shfd=shmget(ftok("udp",0),65536*3,IPC_CREAT|0666);
+    userinfo=(TYPE_USERINFO) shmat(shfd,0,0);
+    memset(userinfo,0,65536*3);
     load();
 
     //创建进程池
@@ -65,6 +68,12 @@ int server::run()
         //写入日志文件,格式:ip-port user type
         sprintf(buff,"%s-%d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port));
         write(logfd,buff,strlen(buff));
+        // for(int i=0;i<65536;++i)
+        //     if(userinfo[i][2]!=0||userinfo[i][1]!=0||userinfo[i][0]!=0)
+        //     {
+        //         cout<<i<<"*"<<userinfo[i][0]<<userinfo[i][1]<<(int)userinfo[i][2]<<endl;
+        //     }
+        cout<<endl;
     }
 
     close(logfd);
@@ -75,7 +84,6 @@ int server::run()
 void server::worker(int rfd)
 {
     //需要增加文件锁与消息发送锁,并通知父进程修改userinfo
-
     size_t nbytes;
     int type;
     while(true)
@@ -93,9 +101,11 @@ void server::worker(int rfd)
         switch(type)
         {
             case 0://注册
-                if(userinfo.find(username)==userinfo.end())
+                if(userinfo[username][2]==0)
                 {
                     //创建新用户
+                    userinfo[username][2]=1;
+                    *((ushort *) (userinfo[username]))=password;
                     buff[4]='0';
                     buff[5]='4';
                     sprintf(buff+8,"注册成功");
@@ -116,12 +126,12 @@ void server::worker(int rfd)
                 }
                 break;
             case 1://发送,need to be add somethings
-                if(userinfo.find(username)!=userinfo.end()&&
-                userinfo.find(username)->second==password&&
-                userinfo.find(targetname)!=userinfo.end())
+                if(userinfo[username][2]>0&&
+                *((ushort *) (userinfo[username]))==password&&
+                userinfo[targetname][2]>0)
                 {
                     //用户名与密码验证正确,目标用户存在
-                    password=userinfo.find(targetname)->second;
+                    password=*((ushort *) (userinfo[targetname]));
                     sprintf(path,"%s/%c%c.%c%c",UDPDAT,*(((char *)&targetname)),
                     *(((char *)&targetname)+1),*(((char *)&password)),*(((char *)&password)+1));
                     sprintf(path1,"%s/MESSAGE.st",path);
@@ -167,8 +177,8 @@ void server::worker(int rfd)
                 }
                 break;
             case 2://need to be add somethings
-                if(userinfo.find(username)!=userinfo.end()&&
-                userinfo.find(username)->second==password)
+                if(userinfo[username][2]>0&&
+                *((ushort *) (userinfo[username]))==password)
                 {
                     //用户名与密码验证正确
                     sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
@@ -233,7 +243,8 @@ void server::load()
     {
         if(strlen(dirdata->d_name)==5)
         {
-            userinfo[*(ushort *)dirdata->d_name]=*(ushort *)(dirdata->d_name+3);
+            *(ushort *)(userinfo[*(ushort *)dirdata->d_name])=*(ushort *)(dirdata->d_name+3);
+            userinfo[*(ushort *)dirdata->d_name][2]=1;
         }
     }
     closedir(dir);
