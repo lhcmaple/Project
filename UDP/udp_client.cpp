@@ -26,7 +26,7 @@ client::client(const char *servip)
 int client::run(const char *file)
 {
     timeval tv;
-    tv.tv_sec=10;
+    tv.tv_sec=5;
     tv.tv_usec=0;
     setsockopt(sockfd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));
 
@@ -37,11 +37,11 @@ int client::run(const char *file)
     nbytes=read(filefd,buff,buffsize);
     sendto(sockfd,buff,nbytes,0,(sockaddr *)&servaddr,len);
     nbytes=recvfrom(sockfd,buff,buffsize-1,0,0,0);
-    if(nbytes<0)
+    if(nbytes<=0)
     {
-        if(errno==EAGAIN||errno==EWOULDBLOCK)
-            printf("进程%d超时\n",getpid());
-        exit(1);//接收不到消息
+        // if(errno==EAGAIN||errno==EWOULDBLOCK)
+        //     printf("进程%d超时\n",getpid());
+        exit(-1);//接收不到消息
     }
     else
     {

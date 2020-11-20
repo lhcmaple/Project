@@ -73,7 +73,7 @@ int server::run()
         //     {
         //         cout<<i<<"*"<<userinfo[i][0]<<userinfo[i][1]<<(int)userinfo[i][2]<<endl;
         //     }
-        cout<<endl;
+        // cout<<endl;
     }
 
     close(logfd);
