@@ -6,5 +6,12 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
 
-#endif//_H_DEMO
+#include <cstdio>
+#include <cstring>
+#include <iostream>
+
+
+#endif//_H_DEMOcl
