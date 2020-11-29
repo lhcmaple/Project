@@ -16,64 +16,55 @@ server::server(sockaddr *addr,socklen_t len)
 {
     sockfd=socket(AF_INET,SOCK_DGRAM,0);
     bind(sockfd,addr,len);
-    buffsize=(1<<16);
-    buff=new char[buffsize];
+
+    buff=new char[NPOOL][BUFFSIZE];
+
+    userinfo=new char[USERNUM][3];
+    memset(userinfo,0,USERNUM*3);
+
+    usermutex=new pthread_mutex_t[65536];
+    for(int i=0;i<USERNUM;++i)
+        pthread_mutex_init(usermutex+i,NULL);
+
+    servsem=new sem_t[NPOOL];
+    clisem=new sem_t[NPOOL];
+    for(int i=0;i<NPOOL;++i)
+    {
+        sem_init(servsem+i,0,0);
+        sem_init(clisem+i,0,1);
+    }
 }
 
 int server::run()
 {
     mode_t premode=umask(0);
-    //打开udp.log日志文件
-    int logfd=open("udp.log",O_WRONLY|O_APPEND|O_CREAT,RWRWRW);
-    sprintf(buff,"服务器启动...\n");
-    write(logfd,buff,strlen(buff));
-    //获取udp.dat下的所有目录(xx.xx),并读取对应用户的密码
-    int shfd=shmget(ftok("udp",0),65536*3,IPC_CREAT|0666);
-    userinfo=(TYPE_USERINFO) shmat(shfd,0,0);
-    memset(userinfo,0,65536*3);
-    load();
 
-    //创建进程池
+    //打开udp.log日志文件
+    logfd=open("udp.log",O_WRONLY|O_APPEND|O_CREAT,RWRWRW);
+    sprintf(buff[0],"服务器启动...\n");
+    write(logfd,buff[0],strlen(buff[0]));
+
+    //获取udp.dat下的所有目录(xx.xx),并读取对应用户的密码
+    load();
+    //创建线程池
     for(int i=0;i<NPOOL;++i)
     {
-        pipe(pfd[i]);
-        pool[i]=fork();
-        if(pool[i]<0)
-            return -1;
-        else if(pool[i]==0)
-        {
-            close(pfd[i][1]);
-            worker(pfd[i][0]);
-            exit(0);
-        }
-        else
-        {
-            close(pfd[i][0]);
-        }
+        args[i].s=this;
+        args[i].id=i;
+        pthread_t ptid;
+        pthread_create(&ptid,NULL,pthread_func,(void *)(args+i));
     }
-
     //并发处理请求
-    int nextprocess=0;
-    size_t nbytes;
     while(true)
     {
-        len=sizeof(cliaddr);
-        nbytes=recvfrom(sockfd,buff,buffsize,0,(sockaddr *)&cliaddr,&len);
-        write(pfd[nextprocess][1],&len,sizeof(len));
-        write(pfd[nextprocess][1],&cliaddr,len);
-        write(pfd[nextprocess][1],&nbytes,sizeof(nbytes));
-        write(pfd[nextprocess][1],buff,nbytes);
-        nextprocess=(nextprocess+1)%NPOOL;
-
-        //写入日志文件,格式:ip-port user type
-        sprintf(buff,"%s-%d\n",inet_ntoa(cliaddr.sin_addr),ntohs(cliaddr.sin_port));
-        write(logfd,buff,strlen(buff));
-        // for(int i=0;i<65536;++i)
-        //     if(userinfo[i][2]!=0||userinfo[i][1]!=0||userinfo[i][0]!=0)
-        //     {
-        //         cout<<i<<"*"<<userinfo[i][0]<<userinfo[i][1]<<(int)userinfo[i][2]<<endl;
-        //     }
-        // cout<<endl;
+        for(int i=0;i<NPOOL;++i)
+        {
+            if(sem_trywait(clisem+i))
+                continue;
+            len[i]=sizeof(cliaddr[i]);
+            nbytes[i]=recvfrom(sockfd,buff[i],BUFFSIZE,0,(sockaddr *)(cliaddr+i),len+i);
+            sem_post(servsem+i);
+        }
     }
 
     close(logfd);
@@ -81,36 +72,32 @@ int server::run()
     return 0;
 }
 
-void server::worker(int rfd)
+void server::worker(int id)
 {
-    //需要增加文件锁与消息发送锁,并通知父进程修改userinfo
-    size_t nbytes;
+    char path[PATH_LENGTH],path1[PATH_LENGTH];
     int type;
+
     while(true)
     {
-        read(rfd,&len,sizeof(len));
-        read(rfd,&cliaddr,len);
-        read(rfd,&nbytes,sizeof(nbytes));
-        read(rfd,buff,nbytes);
-        if(nbytes<8)
-            continue;
-        type=gettype();
-        username=*(ushort *)buff;
-        password=*(ushort *)(buff+2);
-        targetname=*(ushort *)(buff+6);
+        sem_wait(servsem+id);
+        username[id]=*(ushort *)buff[id];
+        password[id]=*(ushort *)(buff[id]+2);
+        targetname[id]=*(ushort *)(buff[id]+6);
+        type=gettype(id);
+        while(pthread_mutex_lock(usermutex+id));
         switch(type)
         {
             case 0://注册
-                if(userinfo[username][2]==0)
+                if(userinfo[username[id]][2]==0)
                 {
                     //创建新用户
-                    userinfo[username][2]=1;
-                    *((ushort *) (userinfo[username]))=password;
-                    buff[4]='0';
-                    buff[5]='4';
-                    sprintf(buff+8,"注册成功");
-                    sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
-                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
+                    userinfo[username[id]][2]=1;
+                    *((ushort *) (userinfo[username[id]]))=password[id];
+                    buff[id][4]='0';
+                    buff[id][5]='4';
+                    sprintf(buff[id]+8,"注册成功");
+                    sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) &cliaddr+id,len[id]);
+                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[id][0],buff[id][1],buff[id][2],buff[id][3]);
                     mkdir(path,RWXRWRW);
                     //创建消息栈
                     sprintf(path1,"%s/MESSAGE.st",path);
@@ -119,24 +106,27 @@ void server::worker(int rfd)
                 else
                 {
                     //用户已存在
-                    buff[4]='0';
-                    buff[5]='3';
-                    sprintf(buff+8,"注册失败");
-                    sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    buff[id][4]='0';
+                    buff[id][5]='3';
+                    sprintf(buff[id]+8,"注册失败");
+                    sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                 }
                 break;
             case 1://发送,need to be add somethings
-                if(userinfo[username][2]>0&&
-                *((ushort *) (userinfo[username]))==password&&
-                userinfo[targetname][2]>0)
+                if(userinfo[username[id]][2]>0&&
+                *((ushort *) (userinfo[username[id]]))==password[id]&&
+                userinfo[targetname[id]][2]>0)
                 {
                     //用户名与密码验证正确,目标用户存在
-                    password=*((ushort *) (userinfo[targetname]));
-                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,*(((char *)&targetname)),
-                    *(((char *)&targetname)+1),*(((char *)&password)),*(((char *)&password)+1));
+                    password[id]=*((ushort *) (userinfo[targetname[id]]));
+                    sprintf(path,"%s/%c%c.%c%c",
+                        UDPDAT,
+                        *(((char *)&targetname[id])),
+                        *(((char *)&targetname[id])+1),
+                        *(((char *)&password[id])),
+                        *(((char *)&password[id])+1));
                     sprintf(path1,"%s/MESSAGE.st",path);
                     int messagefd=open(path1,O_RDWR);
-                    // cout<<messagefd<<endl;
                     int filelen=lseek(messagefd,0,SEEK_END);
                     if(filelen<10)//消息栈未满
                     {
@@ -147,41 +137,41 @@ void server::worker(int rfd)
                         // cout<<path1<<endl;
                         int datafd=open(path1,O_WRONLY|O_CREAT,RWRWRW);
                         // cout<<datafd<<endl;
-                        buff[6]=buff[0];
-                        buff[7]=buff[1];
-                        write(datafd,buff+6,nbytes-6);
+                        buff[id][6]=buff[id][0];
+                        buff[id][7]=buff[id][1];
+                        write(datafd,buff[id]+6,nbytes[id]-6);
                         close(datafd);
 
-                        buff[4]='0';
-                        buff[5]='6';
-                        buff[6]='0';
-                        buff[7]='0';
-                        sprintf(buff+8,"发送成功");
-                        sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                        buff[id][4]='0';
+                        buff[id][5]='6';
+                        buff[id][6]='0';
+                        buff[id][7]='0';
+                        sprintf(buff[id]+8,"发送成功");
+                        sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                     }
                     else
                     {
-                        buff[4]='1';
-                        buff[5]='0';
-                        sprintf(buff+8,"消息栈满");
-                        sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                        buff[id][4]='1';
+                        buff[id][5]='0';
+                        sprintf(buff[id]+8,"消息栈满");
+                        sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                     }
                     close(messagefd);
                 }
                 else
                 {
-                    buff[4]='0';
-                    buff[5]='5';
-                    sprintf(buff+8,"未注册或目标用户未注册");
-                    sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    buff[id][4]='0';
+                    buff[id][5]='5';
+                    sprintf(buff[id]+8,"未注册或目标用户未注册");
+                    sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                 }
                 break;
             case 2://need to be add somethings
-                if(userinfo[username][2]>0&&
-                *((ushort *) (userinfo[username]))==password)
+                if(userinfo[username[id]][2]>0&&
+                *((ushort *) (userinfo[username[id]]))==password[id])
                 {
                     //用户名与密码验证正确
-                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[0],buff[1],buff[2],buff[3]);
+                    sprintf(path,"%s/%c%c.%c%c",UDPDAT,buff[id][0],buff[id][1],buff[id][2],buff[id][3]);
                     sprintf(path1,"%s/MESSAGE.st",path);
                     int messagefd=open(path1,O_RDWR);
                     int filelen=lseek(messagefd,0,SEEK_END);
@@ -195,36 +185,45 @@ void server::worker(int rfd)
                         close(messagefd);
                         sprintf(path1,"%s/%c",path,num);
                         int datafd=open(path1,O_RDONLY);
-                        buff[4]='0';
-                        buff[5]='8';
-                        nbytes=read(datafd,buff+6,buffsize-6);
+                        buff[id][4]='0';
+                        buff[id][5]='8';
+                        nbytes[id]=read(datafd,buff[id]+6,BUFFSIZE-6);
                         close(datafd);
-                        sendto(sockfd,buff,nbytes+6,0,(sockaddr *) &cliaddr,len);
+                        sendto(sockfd,buff[id],nbytes[id]+6,0,(sockaddr *) cliaddr+id,len[id]);
                         remove(path1);
                     }
                     else
                     {
                         //无消息待转发
-                        buff[4]='0';
-                        buff[5]='7';
-                        sprintf(buff+8,"消息栈空");
-                        sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                        buff[id][4]='0';
+                        buff[id][5]='7';
+                        sprintf(buff[id]+8,"消息栈空");
+                        sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                     }
                     close(messagefd);
                 }
                 else
                 {
-                    buff[4]='0';
-                    buff[5]='9';
-                    sprintf(buff+8,"密码错误");
-                    sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                    buff[id][4]='0';
+                    buff[id][5]='9';
+                    sprintf(buff[id]+8,"密码错误");
+                    sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                 }
                 break;
             default:
-                sprintf(buff+8,"无此服务代码");
-                sendto(sockfd,buff,strlen(buff),0,(sockaddr *) &cliaddr,len);
+                sprintf(buff[id]+8,"无此服务代码");
+                sendto(sockfd,buff[id],strlen(buff[id]),0,(sockaddr *) cliaddr+id,len[id]);
                 break;
         }
+        pthread_mutex_unlock(usermutex+id);
+
+        //写入日志文件,格式:ip-port user type
+        sprintf(buff[id],"(%s-%5d):%02d\n",inet_ntoa(cliaddr[id].sin_addr),ntohs(cliaddr[id].sin_port),type);
+        while(pthread_mutex_lock(&logmutex));
+        write(logfd,buff[id],strlen(buff[id]));
+        pthread_mutex_unlock(&logmutex);
+
+        sem_post(clisem+id);
     }
 }
 
@@ -241,7 +240,7 @@ void server::load()
     struct dirent *dirdata;
     while(dirdata=readdir(dir))
     {
-        if(strlen(dirdata->d_name)==5)
+        if(strlen(dirdata->d_name)==5&&dirdata->d_name[2]=='.')
         {
             *(ushort *)(userinfo[*(ushort *)dirdata->d_name])=*(ushort *)(dirdata->d_name+3);
             userinfo[*(ushort *)dirdata->d_name][2]=1;
@@ -250,16 +249,35 @@ void server::load()
     closedir(dir);
 }
 
-int server::gettype()
+int server::gettype(int id)
 {
-    char num[3]{buff[4],buff[5],'\0'};
-    if(buff[4]>='0'&&buff[4]<='9'&&buff[5]>='0'&&buff[5]<='9')
-        return stoi(num);
+    if(ISNUMBER(buff[id][4])&&ISNUMBER(buff[id][5]))
+        return TONUMBER(buff[id][4],buff[id][5]);
     else
         return -1;
+}
+
+void *pthread_func(void *arg)
+{
+    server *s=((pthread_arg *)arg)->s;
+    int id=((pthread_arg *)arg)->id;
+    s->worker(id);
 }
 
 server::~server()
 {
     delete[] buff;
+    delete[] userinfo;
+    for(int i=0;i<USERNUM;++i)
+    {
+        pthread_mutex_destroy(usermutex+i);
+    }
+    delete[] usermutex;
+    for(int i=0;i<NPOOL;++i)
+    {
+        sem_destroy(servsem+i);
+        sem_destroy(clisem+i);
+    }
+    delete[] servsem;
+    delete[] clisem;
 }

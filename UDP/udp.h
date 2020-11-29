@@ -14,43 +14,61 @@
 #include <ctime>
 #include <dirent.h>
 #include <sys/shm.h>
+#include <pthread.h>
+#include <semaphore.h>
 
 using namespace std;
 
 typedef unsigned short ushort;
-typedef char (*TYPE_USERINFO)[3];
+
+#define ISNUMBER(c) (c<='9'&&c>='0')
+#define TONUMBER(c1,c2) ((c1-'0')*10+(c2-'0'))
 
 #define RWRWRW (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH)
 #define RWXRWRW (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH)
 #define PATH_LENGTH 256
-#define NPOOL 10 //进程池大小
+#define NPOOL 10 //线程池大小
+#define BUFFSIZE 65536
+#define USERNUM 65536
+
+class server;
+
+struct pthread_arg{
+    server *s;
+    int id;
+}args[NPOOL];
 
 class server{
 private:
     static const char *UDPDAT;
 
-    char path[PATH_LENGTH];
-    char path1[PATH_LENGTH];
+    int sockfd;
+    char (*buff)[BUFFSIZE];
+    size_t nbytes[NPOOL];
+    sockaddr_in cliaddr[NPOOL];
+    socklen_t len[NPOOL];
 
-    int sockfd;//进程池共享
-    char *buff;//需要传送到子进程
-    size_t buffsize;//进程池共享
-    sockaddr_in cliaddr;//需要传送到子进程
-    socklen_t len;//需要传送到子进程
+    int logfd;
+    pthread_mutex_t logmutex=PTHREAD_MUTEX_INITIALIZER;
 
-    TYPE_USERINFO userinfo;//共享存储解决同步修改问题
-    ushort username,password,targetname;
+    char (*userinfo)[3];//需清零
+    pthread_mutex_t *usermutex;
+    ushort username[NPOOL],password[NPOOL],targetname[NPOOL];
 
-    pid_t pool[NPOOL];
-    pid_t pfd[NPOOL][2];
+    pthread_t pool[NPOOL];
+    sem_t *servsem,*clisem;//<主线程准备好资源,辅线程完成任务>
 protected:
     void load();
-    int gettype();
-    void worker(int rfd);
+    int gettype(int);
+    void worker(int);
 public:
     server(sockaddr *addr,socklen_t len);
     ~server();
     int run();
+
+    friend void *pthread_func(void *);
 };
+
+void *pthread_func(void *);
 
 #endif//_H_UDP

@@ -30,7 +30,7 @@ int client::run(const char *file)
     tv.tv_usec=0;
     setsockopt(sockfd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));
 
-    size_t nbytes;
+    long nbytes;
     int filefd;
     sprintf(buff,"udp.tsdat/%s",file);
     filefd=open(buff,O_RDONLY);
@@ -39,8 +39,6 @@ int client::run(const char *file)
     nbytes=recvfrom(sockfd,buff,buffsize-1,0,0,0);
     if(nbytes<=0)
     {
-        // if(errno==EAGAIN||errno==EWOULDBLOCK)
-        //     printf("进程%d超时\n",getpid());
         exit(-1);//接收不到消息
     }
     else

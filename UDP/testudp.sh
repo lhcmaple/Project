@@ -7,7 +7,7 @@ make >/dev/null
 >out
 while [[ $i -lt $testbatch ]]
 do
-    ./udp_client 42.192.55.215 1 >>out &
+    ./udp_client 127.0.0.1 1 >>out &
     i=$((i+1))
 done
 sleep 10
